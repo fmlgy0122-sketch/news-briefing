@@ -1,0 +1,21 @@
+{
+  "title": "나의 뉴스 브리핑",
+  "voice": "ko-KR-SunHiNeural",
+  "rate": "+0%",
+  "target_chars": 3800,
+  "window_hours": 14,
+  "keep_episodes": 6,
+  "sections": {
+    "종합": [
+      {"name": "연합뉴스", "url": "https://www.yna.co.kr/rss/news.xml"},
+      {"name": "KBS", "url": "https://news.kbs.co.kr/rss/rss.xml"},
+      {"name": "SBS", "url": "https://news.sbs.co.kr/news/newsflashRssFeed.do?plink=RSSREADER"},
+      {"name": "MBC", "url": "https://imnews.imbc.com/rss/news/news_00.xml"}
+    ],
+    "경제": [
+      {"name": "연합뉴스", "url": "https://www.yna.co.kr/rss/economy.xml"},
+      {"name": "SBS", "url": "https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=02&plink=RSSREADER"},
+      {"name": "MBC", "url": "https://imnews.imbc.com/rss/news/news_04.xml"}
+    ]
+  }
+}
