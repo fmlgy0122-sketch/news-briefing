@@ -1,9 +1,10 @@
 name: build-news-audio
 
+# 15분마다 "방송 시각이 지났는데 아직 방송이 없는지"만 확인합니다.
+# 방송 시각은 feeds.json 의 "times" 에서 바꿉니다 (한국시간). 이 파일은 수정할 필요 없습니다.
 on:
   schedule:
-    - cron: "30 21 * * *"   # 한국시간 06:30
-    - cron: "30 8 * * *"    # 한국시간 17:30
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -18,22 +19,29 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.b.outputs.build }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: python build.py
+      - id: b
+        run: python build.py
         env:
           SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+          FORCE_BUILD: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
+      - if: steps.b.outputs.build == 'true'
+        uses: actions/configure-pages@v5
+      - if: steps.b.outputs.build == 'true'
+        uses: actions/upload-pages-artifact@v3
         with:
           path: site
 
   deploy:
     needs: build
+    if: needs.build.outputs.build == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
