@@ -85,7 +85,7 @@ def recent(items: list[dict], hours: int) -> list[dict]:
 # ---------------------------------------------------------------- 낭독용 정리
 # 화면용 기호·표기를 음성으로 자연스럽게 읽히도록 바꿉니다.
 _BYLINE = re.compile(r"^\s*\([^)]*연합뉴스\)[^=]{0,40}=\s*")  # (서울=연합뉴스) 홍길동 기자 =
-_SKIP_TITLE = re.compile(r"(클로징|오프닝|이 시각 헤드라인|뉴스 마칩니다|\[포토\]|\[영상\]|\[그래픽\])")
+_SKIP_TITLE = re.compile(r"(클로징|오프닝|이 시각 헤드라인|뉴스 마칩니다|\[포토\]|\[영상\]|\[그래픽\]|오늘의 경기|내일의 경기|오늘의 운세)")
 _UNITS = [
     (r"(?<=\d)\s?(?:kg|㎏)", "킬로그램"),
     (r"(?<=\d)\s?(?:km|㎞)", "킬로미터"),
@@ -168,8 +168,11 @@ def short_desc(title: str, desc: str, max_len: int = 110) -> str:
 
 def item_text(it: dict) -> str:
     title = speak(it["title"]).rstrip(" .,")
+    if not title:
+        return ""
     extra = short_desc(it["title"], it["desc"])
-    return f"{title}. {extra}".strip()
+    head = title if title[-1] in "?!" else title + "."   # '얼마?.' 처럼 겹치지 않게
+    return f"{head} {extra}".strip()
 
 
 def norm(t: str) -> str:
@@ -199,6 +202,8 @@ def build_script(collected: dict[str, dict[str, list[dict]]], now: datetime) -> 
                 if not it["title"] or _SKIP_TITLE.search(it["title"]) or key in seen:
                     continue
                 text = item_text(it)
+                if not text.strip(" ."):
+                    continue
                 if used + len(text) > src_budget and used > 0:
                     break
                 seen.add(key)
