@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#111827">
+<link rel="manifest" href="manifest.json">
+<title>뉴스 브리핑</title>
+<style>
+  :root{--bg:#111827;--card:#1f2937;--fg:#f9fafb;--mute:#9ca3af;--acc:#38bdf8}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,"Noto Sans KR",sans-serif;padding:20px 16px 40px;max-width:520px;margin-inline:auto}
+  h1{font-size:20px;margin:0 0 4px} .sub{color:var(--mute);font-size:14px;margin-bottom:20px}
+  #play{width:100%;padding:28px;font-size:24px;font-weight:700;border:0;border-radius:20px;background:var(--acc);color:#04202e}
+  audio{width:100%;margin:16px 0}
+  .row{display:flex;gap:8px;margin-bottom:20px}
+  .row button{flex:1;padding:12px;border:0;border-radius:12px;background:var(--card);color:var(--fg);font-size:15px}
+  .row button.on{background:var(--acc);color:#04202e}
+  ul{list-style:none;padding:0;margin:0} li{background:var(--card);border-radius:12px;padding:14px;margin-bottom:8px}
+  li b{display:block} li span{color:var(--mute);font-size:13px}
+</style>
+</head>
+<body>
+<h1>뉴스 브리핑</h1>
+<div class="sub" id="info">불러오는 중…</div>
+<button id="play">▶ 최신 뉴스 듣기</button>
+<audio id="a" controls preload="none"></audio>
+<div class="row" id="speeds"></div>
+<ul id="list"></ul>
+<script>
+const a=document.getElementById('a'),info=document.getElementById('info'),list=document.getElementById('list');
+let eps=[];
+const fmt=s=>Math.floor(s/60)+'분';
+function load(ep){
+  a.src=ep.file;
+  info.textContent=ep.title+' · 약 '+fmt(ep.duration);
+  if('mediaSession' in navigator){
+    navigator.mediaSession.metadata=new MediaMetadata({title:ep.title,artist:'뉴스 브리핑'});
+    navigator.mediaSession.setActionHandler('seekbackward',()=>a.currentTime-=15);
+    navigator.mediaSession.setActionHandler('seekforward',()=>a.currentTime+=30);
+  }
+}
+async function init(){
+  try{
+    eps=await (await fetch('episodes.json',{cache:'no-store'})).json();
+    load(eps[0]);
+    list.innerHTML=eps.map((e,i)=>`<li data-i="${i}"><b>${e.title}</b><span>약 ${fmt(e.duration)}</span></li>`).join('');
+    if(new URLSearchParams(location.search).has('autoplay'))a.play().catch(()=>{});
+  }catch(e){info.textContent='에피소드를 불러오지 못했습니다.'}
+}
+document.getElementById('play').onclick=()=>{ if(!a.src)return; if(a.paused)a.play(); else a.pause(); };
+a.onplay=()=>document.getElementById('play').textContent='⏸ 일시정지';
+a.onpause=()=>document.getElementById('play').textContent='▶ 최신 뉴스 듣기';
+list.onclick=e=>{const li=e.target.closest('li');if(!li)return;load(eps[li.dataset.i]);a.play()};
+const sp=document.getElementById('speeds');
+[1,1.25,1.5,2].forEach(v=>{const b=document.createElement('button');b.textContent=v+'x';if(v===1)b.className='on';
+  b.onclick=()=>{a.playbackRate=v;[...sp.children].forEach(c=>c.className='');b.className='on'};sp.appendChild(b)});
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');
+init();
+</script>
+</body>
+</html>
