@@ -82,21 +82,98 @@ def recent(items: list[dict], hours: int) -> list[dict]:
     return out or items  # 전부 오래됐으면 원본 유지
 
 
-# ---------------------------------------------------------------- 대본
-def short_desc(title: str, desc: str, max_len: int = 70) -> str:
-    if not desc or desc.startswith(title[:15]) or title.startswith(desc[:15]):
+# ---------------------------------------------------------------- 낭독용 정리
+# 화면용 기호·표기를 음성으로 자연스럽게 읽히도록 바꿉니다.
+_BYLINE = re.compile(r"^\s*\([^)]*연합뉴스\)[^=]{0,40}=\s*")  # (서울=연합뉴스) 홍길동 기자 =
+_SKIP_TITLE = re.compile(r"(클로징|오프닝|이 시각 헤드라인|뉴스 마칩니다|\[포토\]|\[영상\]|\[그래픽\])")
+_UNITS = [
+    (r"(?<=\d)\s?(?:kg|㎏)", "킬로그램"),
+    (r"(?<=\d)\s?(?:km|㎞)", "킬로미터"),
+    (r"(?<=\d)\s?(?:mm|㎜)", "밀리미터"),
+    (r"(?<=\d)\s?(?:cm|㎝)", "센티미터"),
+    (r"(?<=\d)\s?(?:㎡|m2)", "제곱미터"),
+    (r"(?<=\d)\s?℃", "도"),
+]
+
+
+def _paren(m: re.Match) -> str:
+    inner = m.group(1).strip()
+    # 수치 설명((2.3%) 등)은 살리고, 나이·영문 병기·사진설명 등은 뺍니다.
+    if re.search(r"\d", inner) and re.search(r"[%퍼억만조원달러]", inner):
+        return f", {inner}, "
+    before = m.string[m.start() - 1] if m.start() > 0 else " "
+    after = m.string[m.end()] if m.end() < len(m.string) else " "
+    # 손흥민(34·LAFC)이 -> 손흥민이  (조사 앞에 공백이 생기지 않게)
+    if re.match(r"[가-힣0-9A-Za-z]", before) and re.match(r"[가-힣]", after):
         return ""
-    first = re.split(r"(?<=[.다요])\s", desc, maxsplit=1)[0]
-    return first[:max_len].rstrip(" ,.") + "." if first else ""
+    return " "
+
+
+def _clock(m: re.Match) -> str:
+    h, mi = int(m.group(1)), m.group(2)
+    return f"{h}시" if mi == "00" else f"{h}시 {int(mi)}분"
+
+
+def speak(t: str | None) -> str:
+    t = html.unescape(t or "")
+    t = _BYLINE.sub("", t)
+    t = t.replace("폐쇄회로(CC)TV", "CCTV")
+    t = re.sub(r"\((?:종합\d*보?|\d보|상보|사진|영상|포토|그래픽|르포)\)", "", t)
+    t = re.sub(r"\[(속보|단독|긴급)\]\s*", r"\1. ", t)
+    t = re.sub(r"\[\d{4,6}\]", "", t)                      # 종목코드
+    t = re.sub(r"\[[^\]]{0,20}\]\s*", "", t)               # [D리포트] 같은 머리표
+    t = re.sub(r"\(([^()]{0,40})\)", _paren, t)            # 괄호
+    t = re.sub(r"[▲△▼▽■□◆◇●○◎▶▷◀◁※☞★☆☎]", " ", t)       # 장식 기호
+    t = t.replace("…", ", ").replace("...", ", ")
+    t = re.sub(r"[\"'“”‘’「」『』《》〈〉«»]", "", t)       # 따옴표
+    t = re.sub(r"(\d)\s*[∼~～]\s*(\d)", r"\1에서 \2", t)    # 2~3년 -> 2에서 3년
+    t = re.sub(r"[∼~～]", " ", t)
+    t = re.sub(r"\b(\d{1,2}):(\d{2})\b", _clock, t)        # 18:00 -> 18시
+    t = re.sub(r"\$\s?(\d[\d,.]*)", r"\1달러", t)
+    t = re.sub(r"€\s?(\d[\d,.]*)", r"\1유로", t)
+    t = t.replace("%p", "퍼센트포인트").replace("%P", "퍼센트포인트").replace("%", "퍼센트")
+    for pat, rep in _UNITS:
+        t = re.sub(pat, rep, t)
+    t = re.sub(r"(?<=\d),(?=\d{3}(?!\d))", "", t)          # 1,234 -> 1234
+    t = re.sub(                                            # 3천162억 -> 3162억
+        r"(\d+)천\s?(\d{1,3})(?=\s?(?:억|만|조|원|달러))",
+        lambda m: str(int(m.group(1)) * 1000 + int(m.group(2))),
+        t,
+    )
+    t = re.sub(r"(?<=[가-힣]{2})[·ㆍ](?=[가-힣]{2})", ", ", t)  # 유가·국채금리 -> 유가, 국채금리
+    t = re.sub(r"[·ㆍ]", " ", t)                                # 한·미 -> 한 미
+    t = re.sub(r"\s+[-–—―]\s+", ", ", t)
+    t = re.sub(r"[―—–]", ", ", t)
+    t = t.replace("=", " ").replace("/", " ").replace("&", " 앤 ")
+    t = re.sub(r"\s*,(?:\s*,)+", ",", t)
+    t = re.sub(r"\s+([,.])", r"\1", t)
+    t = re.sub(r"^[\s,.=]+", "", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+# ---------------------------------------------------------------- 대본
+def short_desc(title: str, desc: str, max_len: int = 110) -> str:
+    """요약은 '완결된 첫 문장'만 씁니다. 잘린 문장이나 사진설명(▲)은 버립니다."""
+    if not desc or "▲" in desc:
+        return ""
+    d, t = speak(desc), speak(title)
+    m = re.match(r"(.+?[다요]\.)(?:\s|$)", d)
+    if not m:
+        return ""
+    first = m.group(1)
+    if len(first) > max_len or first.startswith(t[:15]) or t.startswith(first[:15]):
+        return ""
+    return first
 
 
 def item_text(it: dict) -> str:
-    title = it["title"].rstrip(" .")
+    title = speak(it["title"]).rstrip(" .,")
     extra = short_desc(it["title"], it["desc"])
     return f"{title}. {extra}".strip()
 
 
 def norm(t: str) -> str:
+    t = re.sub(r"^\s*\[[^\]]*\]\s*", "", t)  # [속보] [단독] 같은 머리표는 중복 판단에서 제외
     return re.sub(r"[^0-9A-Za-z가-힣]", "", t)[:18]
 
 
@@ -119,7 +196,7 @@ def build_script(collected: dict[str, dict[str, list[dict]]], now: datetime) -> 
             used = 0
             for it in items:
                 key = norm(it["title"])
-                if not it["title"] or key in seen:
+                if not it["title"] or _SKIP_TITLE.search(it["title"]) or key in seen:
                     continue
                 text = item_text(it)
                 if used + len(text) > src_budget and used > 0:
