@@ -2,6 +2,11 @@
 
 사용법:  python build.py            (실제 실행: 수집 + MP3 생성)
          python build.py --dry-run  (대본만 출력, 음성 생성 안 함)
+         python build.py --force    (방송 시각과 상관없이 지금 생성)
+
+방송 시각은 feeds.json 의 "times" (한국시간)로 정합니다.
+이 스크립트는 자주(15분마다) 실행되며, 설정한 시각이 지났는데
+그 시각의 방송이 아직 없을 때만 새로 만듭니다.
 """
 from __future__ import annotations
 
@@ -183,10 +188,74 @@ def write_feed(episodes: list[dict], site_url: str) -> None:
     (SITE / "feed.xml").write_text(xml, encoding="utf-8")
 
 
+# ---------------------------------------------------------------- 방송 시각
+DEFAULT_TIMES = ["06:30", "17:30"]
+
+
+def parse_times(raw: list[str] | None) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    for t in raw or DEFAULT_TIMES:
+        try:
+            h, m = str(t).strip().split(":")
+            h, m = int(h), int(m)
+            if 0 <= h < 24 and 0 <= m < 60:
+                out.append((h, m))
+        except ValueError:
+            print(f"[시각 오류] '{t}' 는 무시합니다 (예: 06:30)")
+    return out or [tuple(map(int, t.split(":"))) for t in DEFAULT_TIMES]
+
+
+def slot_due(now: datetime, times: list[tuple[int, int]], last_iso: str | None) -> tuple[bool, str]:
+    """가장 최근에 지난 방송 시각의 방송이 아직 없으면 True."""
+    slots = []
+    for off in (0, -1):
+        d = (now + timedelta(days=off)).date()
+        for h, m in times:
+            slots.append(datetime(d.year, d.month, d.day, h, m, tzinfo=KST))
+    latest = max(s for s in slots if s <= now)
+    label = f"{latest:%m-%d %H:%M}"
+    if last_iso:
+        try:
+            if datetime.fromisoformat(last_iso) >= latest:
+                return False, f"{label} 방송은 이미 있음"
+        except ValueError:
+            pass
+    return True, f"{label} 방송 생성 필요"
+
+
+def last_episode_date(site_url: str) -> str | None:
+    if not site_url:
+        return None
+    raw = fetch_bytes(f"{site_url}/episodes.json", timeout=15)
+    if not raw:
+        return None
+    try:
+        eps = json.loads(raw.decode("utf-8"))
+        return eps[0]["date"] if eps else None
+    except (ValueError, KeyError, IndexError, TypeError):
+        return None
+
+
+def set_output(value: str) -> None:
+    path = os.environ.get("GITHUB_OUTPUT")
+    if path:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"build={value}\n")
+
+
 def main() -> int:
     dry = "--dry-run" in sys.argv
+    force = "--force" in sys.argv or os.environ.get("FORCE_BUILD") == "1"
     now = datetime.now(KST)
     site_url = os.environ.get("SITE_URL", "").rstrip("/")
+
+    if not dry and not force:
+        due, why = slot_due(now, parse_times(CONFIG.get("times")), last_episode_date(site_url))
+        print(f"[시각 확인] 현재 {now:%m-%d %H:%M} / {why}")
+        if not due:
+            set_output("false")
+            return 0
+    set_output("true")
 
     collected: dict[str, dict[str, list[dict]]] = {}
     for sec, feeds in CONFIG["sections"].items():
