@@ -140,6 +140,12 @@ def speak(t: str | None) -> str:
         lambda m: str(int(m.group(1)) * 1000 + int(m.group(2))),
         t,
     )
+    t = re.sub(r"한[·ㆍ](미|중|일|러)", lambda m: "한국과 " + {"미":"미국","중":"중국","일":"일본","러":"러시아"}[m.group(1)], t)
+    t = re.sub(r"한[·ㆍ](?=[가-힣]{2})", "한국과 ", t)
+    for a, b in (("UNIPOD", "유니팟"), ("UNIMOA", "유니모아"), ("UNIQUBE", "유니큐브"), ("SSD", "에스에스디"), ("GPU", "지피유"), ("AX", "에이엑스")):
+        t = t.replace(a, b)
+    t = re.sub(r"유니팟(와|는|를|가)", lambda m: "유니팟" + {"와": "과", "는": "은", "를": "을", "가": "이"}[m.group(1)], t)
+    t = t.replace("S&P500", "에스앤피 500").replace("S&P", "에스앤피")
     t = re.sub(r"(?<=[가-힣]{2})[·ㆍ](?=[가-힣]{2})", ", ", t)  # 유가·국채금리 -> 유가, 국채금리
     t = re.sub(r"[·ㆍ]", " ", t)                                # 한·미 -> 한 미
     t = re.sub(r"\s+[-–—―]\s+", ", ", t)
@@ -331,7 +337,14 @@ def main() -> int:
     now = datetime.now(KST)
     site_url = os.environ.get("SITE_URL", "").rstrip("/")
 
-    if not dry and not force:
+    manual_file = ROOT / "manual" / "today.txt"
+    manual = "--manual" in sys.argv or os.environ.get("MANUAL_BUILD") == "1"
+    if manual and not manual_file.exists():
+        print("manual/today.txt 가 없습니다.")
+        set_output("false")
+        return 1
+
+    if not dry and not force and not manual:
         due, why = slot_due(now, parse_times(CONFIG.get("times")), last_episode_date(site_url))
         print(f"[시각 확인] 현재 {now:%m-%d %H:%M} / {why}")
         if not due:
@@ -340,7 +353,7 @@ def main() -> int:
     set_output("true")
 
     collected: dict[str, dict[str, list[dict]]] = {}
-    for sec, feeds in CONFIG["sections"].items():
+    for sec, feeds in ({} if manual else CONFIG["sections"]).items():
         collected[sec] = {}
         for f in feeds:
             data = fetch_bytes(f["url"])
@@ -348,7 +361,12 @@ def main() -> int:
             collected[sec][f["name"]] = items
             print(f"[수집] {sec}/{f['name']}: {len(items)}건")
 
-    script = build_script(collected, now)
+    if manual:
+        raw = manual_file.read_text(encoding="utf-8-sig")
+        lines = [speak(x) for x in raw.splitlines()]
+        script = "\n".join(x for x in lines if x.strip(" .,"))
+    else:
+        script = build_script(collected, now)
     if not script:
         print("수집된 뉴스가 없어 종료합니다.")
         return 1
@@ -369,7 +387,7 @@ def main() -> int:
     size = mp3.stat().st_size
     ep = {
         "id": eid,
-        "title": f"{now:%Y-%m-%d} {slot} 뉴스",
+        "title": f"{now:%Y-%m-%d} 직접 작성 브리핑" if manual else f"{now:%Y-%m-%d} {slot} 뉴스",
         "date": now.isoformat(),
         "file": f"episodes/{eid}.mp3",
         "size": size,
