@@ -6,6 +6,9 @@ on:
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
+  push:
+    paths:
+      - "manual/today.txt"
 
 permissions:
   contents: read
@@ -31,6 +34,7 @@ jobs:
         run: python build.py
         env:
           SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+          MANUAL_BUILD: ${{ github.event_name == 'push' && '1' || '0' }}
           FORCE_BUILD: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
       - if: steps.b.outputs.build == 'true'
         uses: actions/configure-pages@v5
