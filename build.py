@@ -225,10 +225,90 @@ def build_script(collected: dict[str, dict[str, list[dict]]], now: datetime) -> 
 
 
 # ---------------------------------------------------------------- 음성
-async def synthesize(text: str, out: Path) -> None:
+_HEAD = re.compile(r"^(먼저|다음은|이어서|마지막으로|이제|하나씩|그리고 오늘|첫째|둘째|셋째|첫 번째는|두 번째는|세 번째는)")
+
+
+def plan_segments(text: str) -> list[tuple[str, int, float]]:
+    """(문장, 속도 가감(%), 뒤 쉼(초)) 목록. 제목은 약간 느리게 읽고 길게 쉽니다."""
+    lines = [x.strip() for x in text.splitlines() if x.strip()]
+    segs: list[tuple[str, int, float]] = []
+    for i, ln in enumerate(lines):
+        last = i == len(lines) - 1
+        if len(ln) <= 32 and (_HEAD.match(ln) or ln.endswith(("뉴스입니다.", "소식입니다."))):
+            segs.append((ln, -6, 1.0))
+        elif ln.endswith("?"):
+            segs.append((ln, -2, 0.8))
+        elif last:
+            segs.append((ln, -4, 0.3))
+        elif i == 0:
+            segs.append((ln, -3, 0.9))
+        else:
+            segs.append((ln, 0, 0.5))
+    return segs
+
+
+def _rate(base: str, delta: int) -> str:
+    try:
+        v = int(base.replace("%", "").replace("+", "")) + delta
+    except ValueError:
+        v = delta
+    return f"{v:+d}%"
+
+
+async def synthesize_plain(text: str, out: Path) -> None:
     import edge_tts
 
     await edge_tts.Communicate(text, CONFIG["voice"], rate=CONFIG["rate"]).save(str(out))
+
+
+async def synthesize(text: str, out: Path) -> None:
+    """문장 단위로 나눠 읽고 사이에 쉼을 넣습니다. 실패하면 통째로 읽는 방식으로 대체합니다."""
+    import subprocess
+    import edge_tts
+
+    if not shutil.which("ffmpeg"):
+        return await synthesize_plain(text, out)
+    segs = plan_segments(text)
+    work = out.parent / "_seg"
+    work.mkdir(parents=True, exist_ok=True)
+    sem = asyncio.Semaphore(6)
+
+    async def one(i: int, txt: str, delta: int) -> None:
+        path = work / f"{i:04d}.mp3"
+        async with sem:
+            for attempt in range(3):
+                try:
+                    await edge_tts.Communicate(txt, CONFIG["voice"], rate=_rate(CONFIG["rate"], delta)).save(str(path))
+                    if path.stat().st_size > 0:
+                        return
+                except Exception as e:  # noqa: BLE001
+                    print(f"[음성 재시도 {attempt + 1}] {i}: {e}")
+                await asyncio.sleep(1.5)
+            raise RuntimeError(f"segment {i} failed")
+
+    try:
+        await asyncio.gather(*(one(i, t, d) for i, (t, d, _) in enumerate(segs)))
+        sil: dict[float, Path] = {}
+        for pause in {p for _, _, p in segs}:
+            sp = work / f"sil_{int(pause * 100)}.mp3"
+            subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
+                 "-t", str(pause), "-c:a", "libmp3lame", "-b:a", "48k", str(sp)], check=True)
+            sil[pause] = sp
+        lst = work / "list.txt"
+        with open(lst, "w", encoding="utf-8") as f:
+            for i, (_, _, pause) in enumerate(segs):
+                f.write(f"file '{(work / f'{i:04d}.mp3').as_posix()}'\n")
+                f.write(f"file '{sil[pause].as_posix()}'\n")
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(lst),
+             "-ar", "24000", "-ac", "1", "-c:a", "libmp3lame", "-b:a", "48k", str(out)], check=True)
+        print(f"[음성] {len(segs)}개 문장, 쉼 포함 합성 완료")
+    except Exception as e:  # noqa: BLE001
+        print(f"[문장별 합성 실패 -> 통째로 읽기] {e}")
+        await synthesize_plain(text, out)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 # ---------------------------------------------------------------- 사이트
@@ -337,6 +417,7 @@ def main() -> int:
     now = datetime.now(KST)
     site_url = os.environ.get("SITE_URL", "").rstrip("/")
 
+    why = ""
     manual_file = ROOT / "manual" / "today.txt"
     manual = "--manual" in sys.argv or os.environ.get("MANUAL_BUILD") == "1"
     if manual and not manual_file.exists():
@@ -381,7 +462,8 @@ def main() -> int:
     previous = load_previous(site_url)
 
     eid = now.strftime("%Y%m%d-%H%M")
-    slot = "오전" if now.hour < 12 else "오후"
+    mt = re.search(r"(\d\d):(\d\d) 방송", why)
+    slot = "오전" if (int(mt.group(1)) if mt else now.hour) < 12 else "오후"
     mp3 = SITE / "episodes" / f"{eid}.mp3"
     asyncio.run(synthesize(script, mp3))
     size = mp3.stat().st_size
