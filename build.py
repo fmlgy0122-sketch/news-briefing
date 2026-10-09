@@ -225,6 +225,24 @@ def build_script(collected: dict[str, dict[str, list[dict]]], now: datetime) -> 
 
 
 # ---------------------------------------------------------------- 음성
+VOICES = {
+    "선희": "ko-KR-SunHiNeural", "sunhi": "ko-KR-SunHiNeural", "여성": "ko-KR-SunHiNeural",
+    "인준": "ko-KR-InJoonNeural", "injoon": "ko-KR-InJoonNeural", "남성": "ko-KR-InJoonNeural",
+    "현수": "ko-KR-HyunsuMultilingualNeural", "hyunsu": "ko-KR-HyunsuMultilingualNeural",
+}
+SAMPLE_VOICES = [("선희", "ko-KR-SunHiNeural"), ("인준", "ko-KR-InJoonNeural"), ("현수", "ko-KR-HyunsuMultilingualNeural")]
+
+
+def resolve_voice(v: str | None) -> str:
+    v = (v or "").strip()
+    return VOICES.get(v.lower(), VOICES.get(v, v)) or "ko-KR-SunHiNeural"
+
+
+def norm_rate(v: str) -> str:
+    m = re.search(r"-?\d+", v or "")
+    return f"{int(m.group()):+d}%" if m else "+0%"
+
+
 _HEAD = re.compile(r"^(먼저|다음은|이어서|마지막으로|이제|하나씩|그리고 오늘|첫째|둘째|셋째|첫 번째는|두 번째는|세 번째는)")
 
 
@@ -235,15 +253,15 @@ def plan_segments(text: str) -> list[tuple[str, int, float]]:
     for i, ln in enumerate(lines):
         last = i == len(lines) - 1
         if len(ln) <= 32 and (_HEAD.match(ln) or ln.endswith(("뉴스입니다.", "소식입니다."))):
-            segs.append((ln, -6, 1.0))
+            segs.append((ln, -2, 0.6))
         elif ln.endswith("?"):
-            segs.append((ln, -2, 0.8))
-        elif last:
-            segs.append((ln, -4, 0.3))
-        elif i == 0:
-            segs.append((ln, -3, 0.9))
-        else:
             segs.append((ln, 0, 0.5))
+        elif last:
+            segs.append((ln, -2, 0.3))
+        elif i == 0:
+            segs.append((ln, 0, 0.6))
+        else:
+            segs.append((ln, 0, 0.3))
     return segs
 
 
@@ -259,6 +277,35 @@ async def synthesize_plain(text: str, out: Path) -> None:
     import edge_tts
 
     await edge_tts.Communicate(text, CONFIG["voice"], rate=CONFIG["rate"]).save(str(out))
+
+
+async def synthesize_multi(parts: list[tuple[str, str]], out: Path) -> None:
+    """성우 샘플: 같은 원고를 여러 목소리로 읽어 이어 붙입니다."""
+    import subprocess
+
+    work = out.parent / "_smp"
+    work.mkdir(parents=True, exist_ok=True)
+    try:
+        base = CONFIG["voice"]
+        files = []
+        for i, (txt, voice) in enumerate(parts):
+            CONFIG["voice"] = voice
+            f = work / f"{i}.mp3"
+            await synthesize(txt, f)
+            files.append(f)
+        CONFIG["voice"] = base
+        sp = work / "gap.mp3"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
+                        "-t", "1.5", "-c:a", "libmp3lame", "-b:a", "48k", str(sp)], check=True)
+        lst = work / "list.txt"
+        with open(lst, "w", encoding="utf-8") as fh:
+            for f in files:
+                fh.write(f"file '{f.as_posix()}'\n")
+                fh.write(f"file '{sp.as_posix()}'\n")
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(lst),
+                        "-ar", "24000", "-ac", "1", "-c:a", "libmp3lame", "-b:a", "48k", str(out)], check=True)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 async def synthesize(text: str, out: Path) -> None:
@@ -416,6 +463,9 @@ def main() -> int:
     force = "--force" in sys.argv or os.environ.get("FORCE_BUILD") == "1"
     now = datetime.now(KST)
     site_url = os.environ.get("SITE_URL", "").rstrip("/")
+    CONFIG["voice"] = resolve_voice(CONFIG.get("voice"))
+    CONFIG["rate"] = norm_rate(CONFIG.get("rate", "+0%"))
+    sample_parts: list[tuple[str, str]] = []
 
     why = ""
     manual_file = ROOT / "manual" / "today.txt"
@@ -444,8 +494,24 @@ def main() -> int:
 
     if manual:
         raw = manual_file.read_text(encoding="utf-8-sig")
-        lines = [speak(x) for x in raw.splitlines()]
+        body = []
+        for x in raw.splitlines():
+            m = re.match(r"^\s*@(성우|목소리|voice|속도|rate)\s*[:=]\s*(.+?)\s*$", x, re.I)
+            if not m:
+                body.append(x)
+            elif m.group(1).lower() in ("성우", "목소리", "voice"):
+                if m.group(2).strip() in ("샘플", "비교", "sample"):
+                    sample_parts = [("", "")]
+                else:
+                    CONFIG["voice"] = resolve_voice(m.group(2))
+            else:
+                CONFIG["rate"] = norm_rate(m.group(2))
+        lines = [speak(x) for x in body]
         script = "\n".join(x for x in lines if x.strip(" .,"))
+        if sample_parts:
+            demo = "\n".join(script.splitlines()[:9])
+            sample_parts = [(f"{name} 목소리입니다.\n{demo}", v) for name, v in SAMPLE_VOICES]
+            script = "\n".join(t for t, _ in sample_parts)
     else:
         script = build_script(collected, now)
     if not script:
@@ -465,11 +531,15 @@ def main() -> int:
     mt = re.search(r"(\d\d):(\d\d) 방송", why)
     slot = "오전" if (int(mt.group(1)) if mt else now.hour) < 12 else "오후"
     mp3 = SITE / "episodes" / f"{eid}.mp3"
-    asyncio.run(synthesize(script, mp3))
+    print(f"[음성] {CONFIG['voice']} / 속도 {CONFIG['rate']}")
+    if sample_parts:
+        asyncio.run(synthesize_multi(sample_parts, mp3))
+    else:
+        asyncio.run(synthesize(script, mp3))
     size = mp3.stat().st_size
     ep = {
         "id": eid,
-        "title": f"{now:%Y-%m-%d} 직접 작성 브리핑" if manual else f"{now:%Y-%m-%d} {slot} 뉴스",
+        "title": (f"{now:%Y-%m-%d} 성우 샘플 (선희, 인준, 현수 순서)" if sample_parts else f"{now:%Y-%m-%d} 직접 작성 브리핑") if manual else f"{now:%Y-%m-%d} {slot} 뉴스",
         "date": now.isoformat(),
         "file": f"episodes/{eid}.mp3",
         "size": size,
