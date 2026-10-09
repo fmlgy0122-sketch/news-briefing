@@ -1,10 +1,8 @@
 name: build-news-audio
 
-# 15분마다 "방송 시각이 지났는데 아직 방송이 없는지"만 확인합니다.
-# 방송 시각은 feeds.json 의 "times" 에서 바꿉니다 (한국시간). 이 파일은 수정할 필요 없습니다.
+# RSS 자동 수집은 중단했습니다. 메일로 받은 원고(manual/today.txt)가 올라올 때만 방송을 만듭니다.
+# (필요하면 Actions 탭에서 Run workflow 로 RSS 방송을 직접 만들 수 있습니다.)
 on:
-  schedule:
-    - cron: "*/15 * * * *"
   workflow_dispatch:
   push:
     paths:
