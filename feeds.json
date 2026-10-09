@@ -3,7 +3,7 @@
   "times": ["06:30", "17:30"],
   "voice": "인준",
   "rate": "+15%",
-  "pitch": "+5Hz",
+  "pitch": "+6Hz",
   "volume": "+8%",
   "target_chars": 3800,
   "window_hours": 14,
