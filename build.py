@@ -230,12 +230,23 @@ VOICES = {
     "인준": "ko-KR-InJoonNeural", "injoon": "ko-KR-InJoonNeural", "남성": "ko-KR-InJoonNeural",
     "현수": "ko-KR-HyunsuMultilingualNeural", "hyunsu": "ko-KR-HyunsuMultilingualNeural",
 }
-SAMPLE_VOICES = [("선희", "ko-KR-SunHiNeural"), ("인준", "ko-KR-InJoonNeural"), ("현수", "ko-KR-HyunsuMultilingualNeural")]
+SAMPLES = [  # (이름, 음성, 속도, 음높이, 음량)
+    ("선희 기본", "ko-KR-SunHiNeural", "+15%", "+0Hz", "+0%"),
+    ("선희 활기", "ko-KR-SunHiNeural", "+15%", "+6Hz", "+8%"),
+    ("인준 활기", "ko-KR-InJoonNeural", "+15%", "+5Hz", "+8%"),
+    ("현수 활기", "ko-KR-HyunsuMultilingualNeural", "+15%", "+5Hz", "+8%"),
+]
+TONES = {"활기": ("+15%", "+6Hz", "+8%"), "활기찬": ("+15%", "+6Hz", "+8%"), "차분": ("+0%", "+0Hz", "+0%"), "기본": ("+15%", "+0Hz", "+0%")}
 
 
 def resolve_voice(v: str | None) -> str:
     v = (v or "").strip()
     return VOICES.get(v.lower(), VOICES.get(v, v)) or "ko-KR-SunHiNeural"
+
+
+def norm_hz(v: str | None) -> str:
+    m = re.search(r"-?\d+", v or "")
+    return f"{int(m.group()):+d}Hz" if m else "+0Hz"
 
 
 def norm_rate(v: str) -> str:
@@ -265,6 +276,11 @@ def plan_segments(text: str) -> list[tuple[str, int, float]]:
     return segs
 
 
+def _pitch(base: str, delta: int) -> str:
+    m = re.search(r"-?\d+", base or "")
+    return f"{(int(m.group()) if m else 0) + delta:+d}Hz"
+
+
 def _rate(base: str, delta: int) -> str:
     try:
         v = int(base.replace("%", "").replace("+", "")) + delta
@@ -276,24 +292,24 @@ def _rate(base: str, delta: int) -> str:
 async def synthesize_plain(text: str, out: Path) -> None:
     import edge_tts
 
-    await edge_tts.Communicate(text, CONFIG["voice"], rate=CONFIG["rate"]).save(str(out))
+    await edge_tts.Communicate(text, CONFIG["voice"], rate=CONFIG["rate"], pitch=CONFIG["pitch"], volume=CONFIG["volume"]).save(str(out))
 
 
-async def synthesize_multi(parts: list[tuple[str, str]], out: Path) -> None:
+async def synthesize_multi(parts: list[tuple], out: Path) -> None:
     """성우 샘플: 같은 원고를 여러 목소리로 읽어 이어 붙입니다."""
     import subprocess
 
     work = out.parent / "_smp"
     work.mkdir(parents=True, exist_ok=True)
     try:
-        base = CONFIG["voice"]
+        base = (CONFIG["voice"], CONFIG["rate"], CONFIG["pitch"], CONFIG["volume"])
         files = []
-        for i, (txt, voice) in enumerate(parts):
-            CONFIG["voice"] = voice
+        for i, (txt, voice, rt, pt, vo) in enumerate(parts):
+            CONFIG["voice"], CONFIG["rate"], CONFIG["pitch"], CONFIG["volume"] = voice, rt, pt, vo
             f = work / f"{i}.mp3"
             await synthesize(txt, f)
             files.append(f)
-        CONFIG["voice"] = base
+        CONFIG["voice"], CONFIG["rate"], CONFIG["pitch"], CONFIG["volume"] = base
         sp = work / "gap.mp3"
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
                         "-t", "1.5", "-c:a", "libmp3lame", "-b:a", "48k", str(sp)], check=True)
@@ -325,7 +341,7 @@ async def synthesize(text: str, out: Path) -> None:
         async with sem:
             for attempt in range(3):
                 try:
-                    await edge_tts.Communicate(txt, CONFIG["voice"], rate=_rate(CONFIG["rate"], delta)).save(str(path))
+                    await edge_tts.Communicate(txt, CONFIG["voice"], rate=_rate(CONFIG["rate"], delta), pitch=_pitch(CONFIG["pitch"], 3 if delta < 0 else 0), volume=CONFIG["volume"]).save(str(path))
                     if path.stat().st_size > 0:
                         return
                 except Exception as e:  # noqa: BLE001
@@ -465,7 +481,9 @@ def main() -> int:
     site_url = os.environ.get("SITE_URL", "").rstrip("/")
     CONFIG["voice"] = resolve_voice(CONFIG.get("voice"))
     CONFIG["rate"] = norm_rate(CONFIG.get("rate", "+0%"))
-    sample_parts: list[tuple[str, str]] = []
+    CONFIG["pitch"] = norm_hz(CONFIG.get("pitch"))
+    CONFIG["volume"] = norm_rate(CONFIG.get("volume", "+0%"))
+    sample_parts: list[tuple] = []
 
     why = ""
     manual_file = ROOT / "manual" / "today.txt"
@@ -496,22 +514,30 @@ def main() -> int:
         raw = manual_file.read_text(encoding="utf-8-sig")
         body = []
         for x in raw.splitlines():
-            m = re.match(r"^\s*@(성우|목소리|voice|속도|rate)\s*[:=]\s*(.+?)\s*$", x, re.I)
+            m = re.match(r"^\s*@(성우|목소리|voice|속도|rate|톤|tone|음높이|pitch|음량|volume)\s*[:=]\s*(.+?)\s*$", x, re.I)
             if not m:
                 body.append(x)
             elif m.group(1).lower() in ("성우", "목소리", "voice"):
                 if m.group(2).strip() in ("샘플", "비교", "sample"):
-                    sample_parts = [("", "")]
+                    sample_parts = [("", "", "", "", "")]
                 else:
                     CONFIG["voice"] = resolve_voice(m.group(2))
+            elif m.group(1).lower() in ("톤", "tone"):
+                t = TONES.get(m.group(2).strip())
+                if t:
+                    CONFIG["rate"], CONFIG["pitch"], CONFIG["volume"] = t
+            elif m.group(1).lower() in ("음높이", "pitch"):
+                CONFIG["pitch"] = norm_hz(m.group(2))
+            elif m.group(1).lower() in ("음량", "volume"):
+                CONFIG["volume"] = norm_rate(m.group(2))
             else:
                 CONFIG["rate"] = norm_rate(m.group(2))
         lines = [speak(x) for x in body]
         script = "\n".join(x for x in lines if x.strip(" .,"))
         if sample_parts:
             demo = "\n".join(script.splitlines()[:9])
-            sample_parts = [(f"{name} 목소리입니다.\n{demo}", v) for name, v in SAMPLE_VOICES]
-            script = "\n".join(t for t, _ in sample_parts)
+            sample_parts = [(f"{name} 목소리입니다.\n{demo}", v, r, p, vo) for name, v, r, p, vo in SAMPLES]
+            script = "\n".join(t[0] for t in sample_parts)
     else:
         script = build_script(collected, now)
     if not script:
@@ -539,7 +565,7 @@ def main() -> int:
     size = mp3.stat().st_size
     ep = {
         "id": eid,
-        "title": (f"{now:%Y-%m-%d} 성우 샘플 (선희, 인준, 현수 순서)" if sample_parts else f"{now:%Y-%m-%d} 직접 작성 브리핑") if manual else f"{now:%Y-%m-%d} {slot} 뉴스",
+        "title": (f"{now:%Y-%m-%d} 성우 샘플 (선희 기본, 선희 활기, 인준 활기, 현수 활기)" if sample_parts else f"{now:%Y-%m-%d} 직접 작성 브리핑") if manual else f"{now:%Y-%m-%d} {slot} 뉴스",
         "date": now.isoformat(),
         "file": f"episodes/{eid}.mp3",
         "size": size,
