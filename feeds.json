@@ -1,8 +1,10 @@
 {
   "title": "나의 뉴스 브리핑",
   "times": ["06:30", "17:30"],
-  "voice": "ko-KR-SunHiNeural",
+  "voice": "인준",
   "rate": "+15%",
+  "pitch": "+5Hz",
+  "volume": "+8%",
   "target_chars": 3800,
   "window_hours": 14,
   "keep_episodes": 6,
