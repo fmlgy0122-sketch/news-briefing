@@ -239,8 +239,14 @@ SAMPLES = [  # (이름, 음성, 속도, 음높이, 음량)
 TONES = {"활기": ("+15%", "+6Hz", "+8%"), "활기찬": ("+15%", "+6Hz", "+8%"), "차분": ("+0%", "+0Hz", "+0%"), "기본": ("+15%", "+0Hz", "+0%")}
 
 
+WEEKDAY_VOICES = ["인준", "현수", "선희", "인준", "현수", "선희", "인준"]  # 월~일
+
+
 def resolve_voice(v: str | None) -> str:
     v = (v or "").strip()
+    if v.lower() in ("요일별", "요일", "weekday"):
+        kst = datetime.now(timezone(timedelta(hours=9)))
+        v = WEEKDAY_VOICES[kst.weekday()]
     return VOICES.get(v.lower(), VOICES.get(v, v)) or "ko-KR-SunHiNeural"
 
 
