@@ -30,6 +30,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
+      - run: command -v ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
       - id: b
         run: python build.py
         env:
