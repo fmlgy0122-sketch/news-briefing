@@ -18,6 +18,9 @@
   .row button.on{background:var(--acc);color:#04202e}
   ul{list-style:none;padding:0;margin:0} li{background:var(--card);border-radius:12px;padding:14px;margin-bottom:8px}
   li b{display:block} li span{color:var(--mute);font-size:13px}
+  li .top{display:flex;align-items:center;gap:8px;justify-content:space-between} li .top div{flex:1;min-width:0}
+  .sbtn{border:0;border-radius:10px;background:#374151;color:var(--fg);padding:8px 12px;font-size:13px;white-space:nowrap}
+  .st{white-space:pre-wrap;word-break:keep-all;line-height:1.7;font-size:14px;margin:12px 0 0;padding:12px;background:#111827;border-radius:10px;max-height:60vh;overflow:auto}
 </style>
 </head>
 <body>
@@ -44,14 +47,25 @@ async function init(){
   try{
     eps=await (await fetch('episodes.json',{cache:'no-store'})).json();
     load(eps[0]);
-    list.innerHTML=eps.map((e,i)=>`<li data-i="${i}"><b>${e.title}</b><span>약 ${fmt(e.duration)}</span></li>`).join('');
+    list.innerHTML=eps.map((e,i)=>`<li data-i="${i}"><div class="top"><div><b>${e.title}</b><span>약 ${fmt(e.duration)}</span></div>${e.script?'<button class="sbtn" data-s="1">원고 보기</button>':''}</div></li>`).join('');
     if(new URLSearchParams(location.search).has('autoplay'))a.play().catch(()=>{});
   }catch(e){info.textContent='에피소드를 불러오지 못했습니다.'}
 }
 document.getElementById('play').onclick=()=>{ if(!a.src)return; if(a.paused)a.play(); else a.pause(); };
 a.onplay=()=>document.getElementById('play').textContent='⏸ 일시정지';
 a.onpause=()=>document.getElementById('play').textContent='▶ 최신 뉴스 듣기';
-list.onclick=e=>{const li=e.target.closest('li');if(!li)return;load(eps[li.dataset.i]);a.play()};
+list.onclick=async e=>{
+  const li=e.target.closest('li');if(!li)return;
+  if(e.target.dataset.s){
+    let pre=li.querySelector('.st');
+    if(pre){pre.remove();e.target.textContent='원고 보기';return}
+    pre=document.createElement('pre');pre.className='st';pre.textContent='불러오는 중…';li.appendChild(pre);
+    e.target.textContent='원고 닫기';
+    try{pre.textContent=await (await fetch(eps[li.dataset.i].script,{cache:'no-store'})).text()}
+    catch(_){pre.textContent='원고를 불러오지 못했습니다.'}
+    return;
+  }
+  load(eps[li.dataset.i]);a.play()};
 const sp=document.getElementById('speeds');
 [1,1.25,1.5,2].forEach(v=>{const b=document.createElement('button');b.textContent=v+'x';if(v===1)b.className='on';
   b.onclick=()=>{a.playbackRate=v;[...sp.children].forEach(c=>c.className='');b.className='on'};sp.appendChild(b)});

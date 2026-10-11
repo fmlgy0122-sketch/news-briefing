@@ -1,5 +1,5 @@
 // 앱 껍데기(HTML/아이콘)만 캐시합니다. 오디오는 캐시하지 않습니다.
-const CACHE = "news-shell-v1";
+const CACHE = "news-shell-v2";
 const SHELL = ["./", "index.html", "manifest.json", "icon.svg"];
 
 self.addEventListener("install", (e) => {
@@ -16,6 +16,6 @@ self.addEventListener("activate", (e) => {
 
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
-  if (e.request.method !== "GET" || url.pathname.endsWith(".mp3") || url.pathname.endsWith("episodes.json")) return;
+  if (e.request.method !== "GET" || url.pathname.endsWith(".mp3") || url.pathname.endsWith("episodes.json") || url.pathname.endsWith(".txt")) return;
   e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
 });

@@ -398,6 +398,12 @@ def load_previous(site_url: str) -> list[dict]:
         data = fetch_bytes(f"{site_url}/{ep['file']}", timeout=60)
         if data:
             dest.write_bytes(data)
+            if ep.get("script"):
+                sd = fetch_bytes(f"{site_url}/{ep['script']}", timeout=30)
+                if sd:
+                    (SITE / ep["script"]).write_bytes(sd)
+                else:
+                    ep.pop("script", None)
             kept.append(ep)
     return kept
 
@@ -577,7 +583,9 @@ def main() -> int:
         "size": size,
         "duration": int(size / BYTES_PER_SEC),
         "summary": script[:200],
+        "script": f"episodes/{eid}.txt",
     }
+    (SITE / "episodes" / f"{eid}.txt").write_text(script, encoding="utf-8")
     episodes = [ep] + previous
     shutil.copy(mp3, SITE / "latest.mp3")
     (SITE / "episodes.json").write_text(
