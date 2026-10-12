@@ -118,6 +118,8 @@ def speak(t: str | None) -> str:
     t = html.unescape(t or "")
     t = _BYLINE.sub("", t)
     t = t.replace("폐쇄회로(CC)TV", "CCTV")
+    t = re.sub(r"S&P\s*(\d+)", r"에스앤피 \1", t)            # S&P500 -> 에스앤피 500
+    t = t.replace("&", "앤")                                  # 음성 서버 오류 방지
     t = re.sub(r"\((?:종합\d*보?|\d보|상보|사진|영상|포토|그래픽|르포)\)", "", t)
     t = re.sub(r"\[(속보|단독|긴급)\]\s*", r"\1. ", t)
     t = re.sub(r"\[\d{4,6}\]", "", t)                      # 종목코드
