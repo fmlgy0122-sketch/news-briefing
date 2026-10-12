@@ -114,6 +114,16 @@ def _clock(m: re.Match) -> str:
     return f"{h}시" if mi == "00" else f"{h}시 {int(mi)}분"
 
 
+# 음성 서버가 낡은 브라우저 버전을 거절할 때를 대비해, 워크플로가 찾은 버전을 적용합니다.
+if os.environ.get("EDGE_VER"):
+    import edge_tts.constants as _C, edge_tts.communicate as _M
+    _mj = os.environ["EDGE_VER"]
+    _C.CHROMIUM_FULL_VERSION = f"{_mj}.0.0.0"; _C.CHROMIUM_MAJOR_VERSION = _mj
+    _C.SEC_MS_GEC_VERSION = f"1-{_mj}.0.0.0"; _M.SEC_MS_GEC_VERSION = _C.SEC_MS_GEC_VERSION
+    _ua = f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{_mj}.0.0.0 Safari/537.36 Edg/{_mj}.0.0.0"
+    for _h in (_C.WSS_HEADERS, _C.BASE_HEADERS):
+        _h["User-Agent"] = _ua
+
 def speak(t: str | None) -> str:
     t = html.unescape(t or "")
     t = _BYLINE.sub("", t)
