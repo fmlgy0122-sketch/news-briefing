@@ -32,7 +32,11 @@ jobs:
       - id: b
         run: |
           set -o pipefail
-          python build.py 2>&1 | tee build.log || { echo "::error::$(tail -c 900 build.log | tr '\n' ' ')"; exit 1; }
+          for n in 1 2 3; do
+            python build.py 2>&1 | tee build.log && break
+            [ $n -lt 3 ] && sleep 45
+            [ $n -eq 3 ] && { echo "::error::$(tail -c 900 build.log | tr '\n' ' ')"; exit 1; }
+          done
         env:
           SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
           MANUAL_BUILD: '1'
