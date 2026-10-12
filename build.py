@@ -18,6 +18,7 @@ import os
 import re
 import shutil
 import sys
+import time
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
@@ -307,6 +308,37 @@ def _rate(base: str, delta: int) -> str:
     return f"{v:+d}%"
 
 
+def synthesize_gtts(text: str, out: Path) -> None:
+    """마이크로소프트 음성이 막힐 때의 비상용(구글 번역 음성, 목소리는 한 종류)."""
+    import subprocess
+    from gtts import gTTS
+    chunks, cur = [], ""
+    for sent in re.split(r"(?<=[.!?])\s+|\n+", text):
+        sent = sent.strip()
+        if not sent:
+            continue
+        if len(cur) + len(sent) + 1 > 180 and cur:
+            chunks.append(cur); cur = ""
+        cur = (cur + " " + sent).strip()
+    if cur:
+        chunks.append(cur)
+    raw = out.with_suffix(".raw.mp3")
+    with open(raw, "wb") as fh:
+        for c in chunks:
+            for attempt in range(3):
+                try:
+                    gTTS(c, lang="ko").write_to_fp(fh)
+                    break
+                except Exception as e:  # noqa: BLE001
+                    print(f"[gTTS 재시도 {attempt + 1}] {e}")
+                    time.sleep(2)
+            else:
+                raise RuntimeError("gTTS failed")
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(raw), "-filter:a", "atempo=1.15",
+                    "-ar", "24000", "-ac", "1", "-c:a", "libmp3lame", "-b:a", "48k", str(out)], check=True)
+    raw.unlink(missing_ok=True)
+
+
 async def synthesize_plain(text: str, out: Path) -> None:
     import edge_tts
 
@@ -585,7 +617,11 @@ def main() -> int:
     if sample_parts:
         asyncio.run(synthesize_multi(sample_parts, mp3))
     else:
-        asyncio.run(synthesize(script, mp3))
+        try:
+            asyncio.run(synthesize(script, mp3))
+        except Exception as e:  # noqa: BLE001
+            print(f"[경고] 마이크로소프트 음성 실패, 구글 음성으로 대체합니다: {e}")
+            synthesize_gtts(script, mp3)
     size = mp3.stat().st_size
     ep = {
         "id": eid,
