@@ -26,19 +26,26 @@
 <body>
 <h1>뉴스 브리핑</h1>
 <div class="sub" id="info">불러오는 중…</div>
-<button id="play">▶ 최신 뉴스 듣기</button>
+<div class="row" id="versions"><button data-v="short">간략 · 5분 이하</button><button data-v="full" class="on">풀 · 10~15분</button></div>
+<button id="play">▶ 선택한 뉴스 듣기</button>
+<div class="sub" id="notice">오전 6시 정기 방송 · 이후 요청 방송은 별도 생성 후 목록에 표시됩니다.</div>
 <audio id="a" controls preload="none"></audio>
 <div class="row" id="speeds"></div>
 <ul id="list"></ul>
 <script>
 const a=document.getElementById('a'),info=document.getElementById('info'),list=document.getElementById('list');
-let eps=[];
+let eps=[],selected='full';
+const version=e=>e.version||(e.duration<=300?'short':'full');
+const kind=e=>version(e)==='short'?'간략 버전':'풀 버전';
+const title=e=>e.title.replace('직접 작성 브리핑', '종합 뉴스 '+kind(e));
+function pick(){const matched=eps.filter(e=>version(e)===selected);return matched[0]||eps[0]}
+function highlight(){document.querySelectorAll('#versions button').forEach(b=>b.classList.toggle('on',b.dataset.v===selected))}
 const fmt=s=>Math.floor(s/60)+'분';
 function load(ep){
   a.src=ep.file;
-  info.textContent=ep.title+' · 약 '+fmt(ep.duration);
+  info.textContent=title(ep)+' · 약 '+fmt(ep.duration);
   if('mediaSession' in navigator){
-    navigator.mediaSession.metadata=new MediaMetadata({title:ep.title,artist:'뉴스 브리핑'});
+    navigator.mediaSession.metadata=new MediaMetadata({title:title(ep),artist:'UNICUBE CEO 뉴스'});
     navigator.mediaSession.setActionHandler('seekbackward',()=>a.currentTime-=15);
     navigator.mediaSession.setActionHandler('seekforward',()=>a.currentTime+=30);
   }
@@ -46,14 +53,15 @@ function load(ep){
 async function init(){
   try{
     eps=await (await fetch('episodes.json',{cache:'no-store'})).json();
-    load(eps[0]);
-    list.innerHTML=eps.map((e,i)=>`<li data-i="${i}"><div class="top"><div><b>${e.title}</b><span>약 ${fmt(e.duration)}</span></div>${e.script?'<button class="sbtn" data-s="1">원고 보기</button>':''}</div></li>`).join('');
+    load(pick());
+    list.innerHTML=eps.map((e,i)=>`<li data-i="${i}"><div class="top"><div><b>${title(e)}</b><span>약 ${fmt(e.duration)}</span></div>${e.script?'<button class="sbtn" data-s="1">원고 보기</button>':''}</div></li>`).join('');
     if(new URLSearchParams(location.search).has('autoplay'))a.play().catch(()=>{});
   }catch(e){info.textContent='에피소드를 불러오지 못했습니다.'}
 }
+document.getElementById('versions').onclick=e=>{const b=e.target.closest('button[data-v]');if(!b)return;selected=b.dataset.v;highlight();if(eps.length){a.pause();load(pick());}};
 document.getElementById('play').onclick=()=>{ if(!a.src)return; if(a.paused)a.play(); else a.pause(); };
 a.onplay=()=>document.getElementById('play').textContent='⏸ 일시정지';
-a.onpause=()=>document.getElementById('play').textContent='▶ 최신 뉴스 듣기';
+a.onpause=()=>document.getElementById('play').textContent='▶ 선택한 뉴스 듣기';
 list.onclick=async e=>{
   const li=e.target.closest('li');if(!li)return;
   if(e.target.dataset.s){
